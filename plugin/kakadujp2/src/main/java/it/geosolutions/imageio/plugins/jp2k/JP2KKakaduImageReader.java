@@ -16,6 +16,7 @@
  */
 package it.geosolutions.imageio.plugins.jp2k;
 
+import it.geosolutions.imageio.plugins.jp2k.LRUCache;
 import it.geosolutions.imageio.plugins.jp2k.box.BitsPerComponentBox;
 import it.geosolutions.imageio.plugins.jp2k.box.BoxUtilities;
 import it.geosolutions.imageio.plugins.jp2k.box.ChannelDefinitionBox;
@@ -95,6 +96,10 @@ public class JP2KKakaduImageReader extends ImageReader {
     private static Logger LOGGER = Logger
             .getLogger("it.geosolutions.imageio.plugins.jp2k");
 
+    private final static int MAX_ENTRIES = 10;
+    
+    private static LRUCache OpenedCodeStreamCache = new LRUCache(MAX_ENTRIES);
+    
     static {
         final String level = System.getProperty("it.geosolutions.loggerlevel");
         if (level != null && level.equalsIgnoreCase("FINE")) {
@@ -379,20 +384,41 @@ public class JP2KKakaduImageReader extends ImageReader {
             // ////////////////////////////////////////////////////////////////
 
             // Opening data source
-            Kdu_codestream codestream = new Kdu_codestream();
+            
+            KduNativeWrapper kduNativeWrapper = OpenedCodeStreamCache.get(fileName);
+            
+            if (kduNativeWrapper == null) {
+            
+            	synchronized (OpenedCodeStreamCache) {
+            		// make sure no other thread already created it
+            		if (OpenedCodeStreamCache.get(fileName) == null) {
+            	
+            			Kdu_codestream codestream = new Kdu_codestream();
 
-            if (!isRawSource) {
-                localFamilySource = new Jp2_family_src();
-                localWrappedSource = new Jpx_source();
-                localFamilySource.Open(fileName);
-                localWrappedSource.Open(localFamilySource, true);
-                final Jpx_codestream_source stream = localWrappedSource.Access_codestream(imageIndex);
-                final Jpx_input_box inputbox = stream.Open_stream();
-                codestream.Create(inputbox);
-            } else {
-                localRawSource = new Kdu_simple_file_source(fileName);
-                codestream.Create(localRawSource);
+                        if (!isRawSource) {
+                            localFamilySource = new Jp2_family_src();
+                            localWrappedSource = new Jpx_source();
+                            localFamilySource.Open(fileName);
+                            localWrappedSource.Open(localFamilySource, true);
+                            final Jpx_codestream_source stream = localWrappedSource.Access_codestream(imageIndex);
+                            final Jpx_input_box inputbox = stream.Open_stream();
+                            codestream.Create(inputbox);
+                        } else {
+                            localRawSource = new Kdu_simple_file_source(fileName);
+                            codestream.Create(localRawSource);
+                        }
+            			
+            			kduNativeWrapper = new KduNativeWrapper(codestream, isRawSource, localRawSource, localFamilySource, localWrappedSource);
+            			
+            			OpenedCodeStreamCache.put(fileName, kduNativeWrapper);
+            		}
+            		
+            		kduNativeWrapper = OpenedCodeStreamCache.get(fileName);
+            	}           
             }
+            
+            Kdu_codestream codestream = kduNativeWrapper.getCodestream();
+            
 
             // ////////////////////////////////////////////////////////////////
             //
